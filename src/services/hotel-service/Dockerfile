@@ -1,0 +1,25 @@
+FROM openjdk:8-jdk-alpine AS build
+WORKDIR /app
+
+RUN apk add --no-cache maven bash
+
+COPY pom.xml ./
+RUN mvn -B -q -DskipTests dependency:go-offline
+
+COPY src ./src
+RUN mvn -B -DskipTests package
+
+FROM openjdk:8-jdk-alpine
+WORKDIR /app
+
+RUN apk add --no-cache bash
+
+COPY wait-for-it.sh .
+RUN chmod +x wait-for-it.sh
+
+COPY --from=build /app/target/*.jar app.jar
+
+# ENTRYPOINT запускает приложение
+ENTRYPOINT ["sh", "-c", "./wait-for-it.sh -s -t 60 postgres:5432 && \
+                        ./wait-for-it.sh -s -t 60 rabbitmq:5672 && \
+                        exec java -jar app.jar"]

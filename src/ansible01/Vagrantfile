@@ -1,0 +1,47 @@
+# src/ansible01/Vagrantfile
+Vagrant.configure("2") do |config|
+  BOX = "ubuntu-22.04"   # jammy64
+  CPU = 8
+  RAM = 2048
+
+  # приватная сеть (host-only)
+  MANAGER_IP = "192.168.56.10"
+  NODE01_IP  = "192.168.56.11"
+  NODE02_IP  = "192.168.56.12"
+
+  # manager
+  config.vm.define "manager" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "manager"
+    vm.vm.network "private_network", ip: MANAGER_IP
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU
+      vb.memory = RAM
+    end
+  end
+
+  # node01 — сюда будем деплоить микросервисы; пробрасываем порты для доступа с хоста
+  config.vm.define "node01" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "node01"
+    vm.vm.network "private_network", ip: NODE01_IP
+    # проброс портов для твоего compose (session:8081, gateway:8087)
+    vm.vm.network "forwarded_port", guest: 8081, host: 8081, host_ip: "127.0.0.1", auto_correct: true
+    vm.vm.network "forwarded_port", guest: 8087, host: 8087, host_ip: "127.0.0.1", auto_correct: true
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU
+      vb.memory = 4000
+    end
+  end
+
+  # node02 — сюда позже назначим роли apache и postgres
+  config.vm.define "node02" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "node02"
+    vm.vm.network "private_network", ip: NODE02_IP
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU
+      vb.memory = RAM
+    end
+  end
+end
