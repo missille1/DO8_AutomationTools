@@ -1,30 +1,28 @@
 
-Прокидывания ключа на node1 c manager
+Прокидывания ключа на node01 и node02 c manager
 
 ```bash
 # на manager
-ssh-keygen -t ed25519 -C "manager-to-node01" -N "" -f ~/.ssh/id_ed25519
+ssh-keygen -C node1
 ```
 
 ```bash
 # на ХОСТЕ
 mkdir -p /tmp/ansible01
-vagrant ssh manager -c "cat ~/.ssh/id_ed25519.pub" > /tmp/ansible01/manager_id_ed25519.pub
+vagrant ssh manager -c "cat ~/.ssh/id_rsa.pub" > /tmp/ansible01/manager.pub
 ```
 
 ```bash
 # на ХОСТЕ
-vagrant upload /tmp/ansible01/manager_id_ed25519.pub /home/vagrant/manager_id_ed25519.pub node01
+vagrant upload /tmp/ansible01/manager.pub /home/vagrant/manager.pub node01
 
-vagrant ssh node01 -c "mkdir -p ~vagrant/.ssh && chmod 700 ~vagrant/.ssh \
-  && cat /home/vagrant/manager_id_ed25519.pub >> ~vagrant/.ssh/authorized_keys \
-  && chmod 600 ~vagrant/.ssh/authorized_keys \
-  && rm /home/vagrant/manager_id_ed25519.pub"
+vagrant ssh node01 -c "cat /home/vagrant/manager.pub >> ~vagrant/.ssh/authorized_keys \
+  && rm /home/vagrant/manager.pub"
 ```
 
 ```bash
 vagrant ssh manager
-ssh vagrant@192.168.56.11
+ssh vagrant@192.168.56.11 "echo OK && hostname -f"
 ```
 
 ```bash
@@ -38,19 +36,16 @@ sudo apt update
 sudo apt install -y ansible
 
 mkdir -p ~/ansible
-cat > ~/ansible/inventory.ini <<'EOF'
-[application]
-node01 ansible_host=192.168.56.11
-
-[apache]
-node02 ansible_host=192.168.56.12
-
-[postgres]
-node02 ansible_host=192.168.56.12
-
-[all:vars]
-ansible_user=vagrant
-ansible_ssh_private_key_file=~/.ssh/id_ed25519
-EOF
+vim ~/ansible/inventory.yml
 ```
 
+```yml
+nodes:
+  hosts:
+    node01:
+      ansible_host: 192.168.56.11
+    node02:
+      ansible_host: 192.168.56.12
+  vars:
+    ansible_user: vagrant
+```
