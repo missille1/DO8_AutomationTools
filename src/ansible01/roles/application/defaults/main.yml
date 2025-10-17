@@ -1,0 +1,6 @@
+---
+app_src_dir: /home/vagrant/services
+app_dest_dir: /home/vagrant/services
+compose_file: "{{ app_dest_dir }}/docker-compose.yml"
+docker_gpg_url: "https://download.docker.com/linux/ubuntu/gpg"
+docker_apt_repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable"

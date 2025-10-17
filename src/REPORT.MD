@@ -377,10 +377,16 @@ ansible-playbook -i ~/ansible/inventory.yml ~/ansible/deploy_node01.yml
 ```
 
 ```bash
+# на manager
 cd ~/ansible
 ansible-galaxy init roles/application
 ansible-galaxy init roles/apache
 ansible-galaxy init roles/postgres
 ```
 
+чтобы ansible мог взаимодействовать в бд
+```bash
+# на manager
+sudo ansible-galaxy collection install community.postgresql
+```
 

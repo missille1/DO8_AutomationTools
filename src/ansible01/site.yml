@@ -1,0 +1,15 @@
+---
+# node01: микросервисы 
+- name: Application stack on node01
+  hosts: node01
+  become: true
+  roles:
+    - role: application
+
+# node02: apache + postgres
+- name: Apache and Postgres on node02
+  hosts: node02
+  become: true
+  roles:
+    - role: apache
+    - role: postgres

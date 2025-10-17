@@ -1,0 +1,6 @@
+---
+postgresql_version: "16"
+pg_listen_cidr: "192.168.56.0/24"
+pg_db: "school21"
+pg_user: "ramonagr"
+pg_password: "strongpassword"

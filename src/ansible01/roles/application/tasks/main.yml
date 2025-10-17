@@ -1,0 +1,79 @@
+---
+- name: Docker | Update repositories cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+- name: Docker | Download Docker GPG key
+  ansible.builtin.get_url:
+    url: "{{ docker_gpg_url }}"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644
+- name: Docker | Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: "{{ docker_apt_repo }}"
+    state: present # убедиться что репозиторий есть в системе
+    filename: docker.lis
+- name: Docker | Update repositories cache
+  ansible.builtin.apt:
+    update_cache: tru
+- name: Docker | Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: tru
+- name: Docker | enable and start service
+  ansible.builtin.service:
+    name: docker
+    enabled: true
+    state: starte
+- name: Docker | add vagrant to docker group
+  ansible.builtin.user:
+    name: vagrant
+    groups: docker
+    append: tru
+- name: node01 | ensure destination directory exists on node01
+  ansible.builtin.file:
+    path: "{{ app_dest_dir }}"
+    state: directory
+    owner: vagrant
+    group: vagrant
+    mode: "0755
+- name: node01 | copy sources & compose from manager to node01
+  ansible.builtin.copy:
+    src: "{{ app_src_dir }}/docker-compose.yml"
+    dest: "{{ app_dest_dir }}/docker-compose.yml"
+    owner: vagrant
+    group: vagrant
+    mode: "0644"
+    directory_mode: "0755
+- name: Docker | pre-pull base images
+  ansible.builtin.command:
+    cmd: "docker compose -f {{ compose_file }} pull"
+    chdir: "{{ app_dest_dir }}"
+  register: compose_pull # сохраняем результат в переменную
+  changed_when: "'Downloaded' in compose_pull.stdout or 'Pull complete' in compose_pull.stdout
+- name: node01 | start containers
+  ansible.builtin.command:
+    cmd: "docker compose -f {{ compose_file }} up -d"
+    chdir: "{{ app_dest_dir }}"
+  register: compose_u
+- name: Wait | give containers time to warm up
+  ansible.builtin.pause:
+    seconds: 9
+- name: Info | show running containers
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --format
+      - "{{'{{'}}.Names{{'}}'}}\t{{'{{'}}.Status{{'}}'}}\t{{'{{'}}.Ports{{'}}'}}"
+  changed_when: false
+  register: dp
+- name: Info | containers table
+  ansible.builtin.debug:
+    var: dps.stdout_line

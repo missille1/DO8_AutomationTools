@@ -1,0 +1,32 @@
+---
+- name: Apt | Update cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Apt | Install apache2
+  ansible.builtin.apt:
+    name: apache2
+    state: present
+
+- name: Apache | Enable and start
+  ansible.builtin.service:
+    name: apache2
+    enabled: true
+    state: started
+
+# - name: Apache | Simple index page
+#   ansible.builtin.copy:
+#     dest: /var/www/html/index.html
+#     mode: "0644"
+#     content: |
+#       <!doctype html>
+#       <html>
+#       <head><meta charset="utf-8"><title>Apache on node02</title></head>
+#       <body style="font-family: system-ui; max-width: 720px; margin: 48px auto;">
+#         <h1>✅ Apache работает на node02</h1>
+#         <p>Хост: {{ inventory_hostname }}</p>
+#         <p>IP (private): 192.168.56.12</p>
+#         <p>Открой в браузере: <b>http://192.168.56.12/</b></p>
+#       </body>
+#       </html>
