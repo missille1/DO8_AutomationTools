@@ -1,72 +1,81 @@
 ---
 - name: Apt | Update cache
-  ansible.builtin.apt:
+  apt:
     update_cache: true
     cache_valid_time: 3600
 
+- name: Apt | Install ACL (for become_user file perms)
+  apt:
+    name: acl
+    state: present
+    update_cache: true
+  become: true
+
 - name: Apt | Install Postgres and deps
-  ansible.builtin.apt:
+  apt:
     name:
       - "postgresql-{{ postgresql_version }}"
       - postgresql-contrib
-      - python3-psycopg2 # для ansible
-    state: present 
+      - python3-psycopg2
+    state: present
 
 - name: Postgres | Ensure service started
-  ansible.builtin.service:
+  service:
     name: postgresql
     enabled: true
     state: started
 
-# PostgreSQL начнет принимать все сетевые подключения
-# [ссылка] (https://ru.stackoverflow.com/questions/1182421/%D0%A1%D0%BE%D0%B7%D0%B4%D0%B0%D1%82%D1%8C-user-db-%D0%B2-postgresql-%D1%81%D1%80%D0%B5%D0%B4%D1%81%D1%82%D0%B2%D0%B0%D0%BC%D0%B8-ansible)
 - name: Postgres | Listen on all addresses
-  ansible.builtin.lineinfile:
+  lineinfile:
     path: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
-    regexp: "^#?listen_addresses ="
+    regexp: '^#?listen_addresses\s*='
     line: "listen_addresses = '*'"
   notify: Restart Postgres
+  become: true
 
-# PostgreSQL разрешаем подключение
 - name: Postgres | Allow LAN in pg_hba.conf
-  ansible.builtin.blockinfile:
+  blockinfile:
     path: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
     marker: "# {mark} ANSIBLE MANAGED BLOCK FOR LAN ACCESS"
     block: |
-      host    all             all             {{ pg_listen_cidr }}     md5
+      host    all    all    {{ pg_listen_cidr }}    md5
   notify: Restart Postgres
 
-# Создаём пользователя и БД
-- name: Postgres | Ensure user
-  community.postgresql.postgresql_user:
-    name: "{{ pg_user }}"
-    password: "{{ pg_password }}"
-    role_attr_flags: "LOGIN"
-  become_user: postgres
-
-- name: Postgres | Ensure database
+- name: DB | Ensure database exists (owner = postgres)
   community.postgresql.postgresql_db:
     name: "{{ pg_db }}"
-    owner: "{{ pg_user }}"
+    owner: postgres
+    login_unix_socket: /var/run/postgresql
+  become: true
   become_user: postgres
 
-- name: Postgres | Create table if not exists
+- name: DB | Create table if not exists
   community.postgresql.postgresql_query:
     db: "{{ pg_db }}"
     query: |
       CREATE TABLE IF NOT EXISTS public.students(
-        id SERIAL PRIMARY KEY,
+        id   SERIAL PRIMARY KEY,
         name TEXT UNIQUE
       );
+    login_unix_socket: /var/run/postgresql
+  become: true
   become_user: postgres
 
-- name: Postgres | Insert seed rows (no duplicates)
+- name: DB | Insert three rows
   community.postgresql.postgresql_query:
     db: "{{ pg_db }}"
     query: |
-      INSERT INTO public.people(name) VALUES
+      INSERT INTO public.students(name) VALUES
         ('Ramonagr'),
         ('Sandiani'),
         ('Nutmegha')
       ON CONFLICT (name) DO NOTHING;
+    login_unix_socket: /var/run/postgresql
+  become: true
   become_user: postgres
+
+- name: Postgres | Final restart
+  service:
+    name: postgresql
+    state: restarted
+

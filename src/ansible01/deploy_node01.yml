@@ -13,28 +13,28 @@
 
   tasks:
     - name: Docker | Update repositories cache
-      ansible.builtin.apt:
+      apt:
         update_cache: true
         cache_valid_time: 3600 
 
     - name: Docker | Download Docker GPG key
-      ansible.builtin.get_url:
+      get_url:
         url: "{{ docker_gpg_url }}"
         dest: /etc/apt/keyrings/docker.asc
         mode: "0644"
 
     - name: Docker | Add Docker repository
-      ansible.builtin.apt_repository:
+      apt_repository:
         repo: "{{ docker_apt_repo }}"
         state: present # убедиться что репозиторий есть в системе
         filename: docker.list
 
     - name: Docker | Update repositories cache
-      ansible.builtin.apt:
+      apt:
         update_cache: true
 
     - name: Docker | Install Docker packages
-      ansible.builtin.apt:
+      apt:
         name:
           - docker-ce
           - docker-ce-cli
@@ -45,19 +45,19 @@
         update_cache: true
 
     - name: Docker | enable and start service
-      ansible.builtin.service:
+      service:
         name: docker
         enabled: true
         state: started
 
     - name: Docker | add vagrant to docker group
-      ansible.builtin.user:
+      user:
         name: vagrant
         groups: docker
         append: true
 
     - name: node01 | ensure destination directory exists on node01
-      ansible.builtin.file:
+      file:
         path: "{{ app_dest_dir }}"
         state: directory
         owner: vagrant
@@ -65,7 +65,7 @@
         mode: "0755"
 
     - name: node01 | copy sources & compose from manager to node01
-      ansible.builtin.copy:
+      copy:
         src: "{{ app_src_dir }}/docker-compose.yml"
         dest: "{{ app_dest_dir }}/docker-compose.yml"
         owner: vagrant
@@ -74,24 +74,24 @@
         directory_mode: "0755"
 
     - name: Docker | pre-pull base images
-      ansible.builtin.command:
+      command:
         cmd: "docker compose -f {{ compose_file }} pull"
         chdir: "{{ app_dest_dir }}"
       register: compose_pull # сохраняем результат в переменную
       changed_when: "'Downloaded' in compose_pull.stdout or 'Pull complete' in compose_pull.stdout"
 
     - name: node01 | start containers
-      ansible.builtin.command:
+      command:
         cmd: "docker compose -f {{ compose_file }} up -d"
         chdir: "{{ app_dest_dir }}"
       register: compose_up
 
     - name: Wait | give containers time to warm up
-      ansible.builtin.pause:
+      pause:
         seconds: 90
 
     - name: Info | show running containers
-      ansible.builtin.command:
+      command:
         argv:
           - docker
           - ps
@@ -101,5 +101,6 @@
       register: dps
 
     - name: Info | containers table
-      ansible.builtin.debug:
+      debug:
         var: dps.stdout_lines
+

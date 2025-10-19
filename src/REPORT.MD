@@ -53,26 +53,18 @@ end
 
 ```bash
 # на manager
-ssh-keygen -C node1
+ssh-keygen -t ed25519 -C "manager"
 ```
 
 ```bash
-# на ХОСТЕ
-mkdir -p /tmp/ansible01
-vagrant ssh manager -c "cat ~/.ssh/id_rsa.pub" > /tmp/ansible01/manager.pub
+# на manager
+ssh-copy-id -i ~/.ssh/ vagrant@192.168.56.11
+ssh-copy-id -i ~/.ssh/ vagrant@192.168.56.12
 ```
 
 ```bash
-# на ХОСТЕ
-vagrant upload /tmp/ansible01/manager.pub /home/vagrant/manager.pub node01
-
-vagrant ssh node01 -c "cat /home/vagrant/manager.pub >> ~vagrant/.ssh/authorized_keys \
-  && rm /home/vagrant/manager.pub"
-```
-
-```bash
-vagrant ssh manager
-ssh vagrant@192.168.56.11 "echo OK && hostname -f"
+ssh vagrant@192.168.56.11
+ssh vagrant@192.168.56.12
 ```
 
 ```bash
@@ -99,6 +91,11 @@ nodes:
   vars:
     ansible_user: vagrant
 ```
+
+```bash
+ansible -i ./ansible/inventory.yml all -m ping
+```
+
 
 ```yml
 ---
@@ -390,3 +387,25 @@ ansible-galaxy init roles/postgres
 sudo ansible-galaxy collection install community.postgresql
 ```
 
+```bash
+printf '%s\n' '[defaults]' 'remote_tmp = /tmp' 'allow_world_readable_tmpfiles = False' > ansible.cfg
+```
+
+```bash
+# node02
+sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'pgpass';"
+```
+
+```bash
+# на хосте
+psql "postgresql://postgres:pgpass@192.168.56.12:5432/school21" -c 'TABLE public.students;'
+```
+
+```
+# на хосте apache
+http://192.168.56.12/
+```
+
+```bash
+ansible-playbook -i ~/ansible/inventory.yml ~/ansible/site.yml
+```

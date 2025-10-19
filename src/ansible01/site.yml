@@ -10,6 +10,8 @@
 - name: Apache and Postgres on node02
   hosts: node02
   become: true
+  vars:
+    ansible_remote_tmp: /tmp
   roles:
     - role: apache
     - role: postgres
