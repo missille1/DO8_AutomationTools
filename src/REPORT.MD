@@ -409,3 +409,377 @@ http://192.168.56.12/
 ```bash
 ansible-playbook -i ~/ansible/inventory.yml ~/ansible/site.yml
 ```
+
+```ruby
+Vagrant.configure("2") do |config|
+  BOX = "ubuntu-22.04"
+  CPU = 2
+  RAM = 1300
+
+  NET = "192.168.56"
+  MANAGER_IP = "#{NET}.19"
+  CONSUL_IP  = "#{NET}.20"
+  API_IP     = "#{NET}.21"
+  DB_IP      = "#{NET}.22"
+
+  config.vm.define "manager" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "manager"
+    vm.vm.network "private_network", ip: MANAGER_IP
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU; vb.memory = RAM
+    end
+  end
+
+  config.vm.define "consul_server" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "consul-server"
+    vm.vm.network "private_network", ip: CONSUL_IP
+    vm.vm.network "forwarded_port", guest: 8500, host: 8500, host_ip: "127.0.0.1", auto_correct: true
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU; vb.memory = RAM
+    end
+  end
+
+  config.vm.define "api" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "api"
+    vm.vm.network "private_network", ip: API_IP
+    vm.vm.network "forwarded_port", guest: 8082, host: 8082, host_ip: "127.0.0.1", auto_correct: true
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU; vb.memory = RAM
+    end
+  end
+
+  config.vm.define "db" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "db"
+    vm.vm.network "private_network", ip: DB_IP
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU; vb.memory = RAM
+    end
+  end
+end
+```
+
+прокидывание ключей 
+```bash
+
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+
+mkdir -p /tmp/ansible02
+
+vagrant ssh manager -c "cat ~/.ssh/id_ed25519.pub" > /tmp/ansible02/manager.pub
+
+vagrant upload /tmp/ansible02/manager.pub /home/vagrant/manager.pub db
+
+vagrant ssh db -c "cat /home/vagrant/manager.pub >> ~vagrant/.ssh/authorized_keys \
+  && rm /home/vagrant/manager.pub"
+
+ssh vagrant@192.168.56.21 "echo OK && hostname -f"
+```
+
+закидываем сервис hotel и сборка
+```bash
+vagrant upload ../services/hotel-service /home/vagrant/hotel-service manager
+
+sudo apt install -y wget curl gnupg2 software-properties-common
+
+sudo add-apt-repository -y ppa:openjdk-r/ppa
+
+sudo apt update
+
+sudo apt install -y openjdk-8-jdk
+
+java -version
+
+sudo apt install -y maven
+
+mvn -version
+
+cd hotel-service/
+
+mvn clean package -DskipTests
+
+ls target/*.jar
+```
+
+создание ролей
+```bash
+sudo apt install ansible
+mkdir -p ~/ansible02/roles
+cd ~/ansible02
+ansible-galaxy init roles/install_consul_server
+ansible-galaxy init roles/install_consul_client
+ansible-galaxy init roles/install_db
+ansible-galaxy init roles/install_hotels_service
+```
+
+~/ansible02/inventory.yml
+```
+all:
+  vars:
+    ansible_user: vagrant
+    consul_server_ip: 192.168.56.20
+  hosts:
+    manager:
+      ansible_host: 192.168.56.19
+      advertise_addr: 192.168.56.19
+    consul_server:
+      ansible_host: 192.168.56.20
+      advertise_addr: 192.168.56.20
+    api:
+      ansible_host: 192.168.56.21
+      advertise_addr: 192.168.56.21
+    db:
+      ansible_host: 192.168.56.22
+      advertise_addr: 192.168.56.22
+```
+~/ansible02/site.yml
+```
+---
+- name: Consul server
+  hosts: consul_server
+  become: true
+  roles: [install_consul_server]
+
+- name: Consul clients
+  hosts: api,db
+  become: true
+  roles: [install_consul_client]
+
+- name: Postgres on db
+  hosts: db
+  become: true
+  roles: [install_db]
+
+- name: Hotels service on api
+  hosts: api
+  become: true
+  roles: [install_hotels_service]
+```
+
+```bash
+ansible-galaxy collection install community.postgresql
+```
+
+Роль install_consul_server
+
+~/ansible02/roles/install_consul_server/tasks/main.yml
+
+```
+---
+- name: Install Consul from zip (minimal changes)
+  hosts: all
+  become: true
+
+  vars:
+    consul_version: "1.21.5"
+    consul_arch: "amd64"
+    consul_zip_url: "https://releases.hashicorp.com/consul/{{ consul_version }}/consul_{{ consul_version }}_linux_{{ consul_arch }}.zip"
+    consul_zip_path: "/tmp/consul_{{ consul_version }}_linux_{{ consul_arch }}.zip"
+    consul_unzip_dir: "/tmp/consul_{{ consul_version }}"
+
+  tasks:
+    - name: Install necessary packages for Consul
+      apt:
+        name:
+          - curl
+          - unzip
+        state: present
+        update_cache: true
+
+    - name: Download Consul zip
+      get_url:
+        url: "{{ consul_zip_url }}"
+        dest: "{{ consul_zip_path }}"
+        mode: "0644"
+
+    - name: Unzip Consul archive (get consul binary)
+      unarchive:
+        src: "{{ consul_zip_path }}"
+        dest: "{{ consul_unzip_dir }}"
+        remote_src: true
+        creates: "{{ consul_unzip_dir }}/consul"
+
+    - name: Copy Consul binary to /usr/local/bin
+      copy:
+        src: "{{ consul_unzip_dir }}/consul"
+        dest: /usr/local/bin/consul
+        mode: '0755'
+        owner: root
+        group: root
+        remote_src: true
+
+    - name: Create directories for Consul
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - /opt/consul
+        - /opt/consul/data
+        - /etc/consul.d
+        - /etc/consul.d/certs
+
+    - name: Copy Consul server configuration file
+      template:
+        src: ~/ansible02/roles/install_consul_server/templates/consul_server.hcl
+        dest: /etc/consul.d/consul.hcl
+      notify: restart consul
+
+    - name: Create Consul systemd service file
+      copy:
+        dest: /etc/systemd/system/consul.service
+        content: |
+          [Unit]
+          Description=Consul Service
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+      notify: restart consul
+
+    - name: Ensure systemd reloads units and Consul is started
+      service:
+        name: consul
+        state: started
+        enabled: true
+        daemon_reload: yes
+
+  handlers:
+    - name: daemon-reload
+      systemd:
+        daemon_reload: true
+
+    - name: restart consul
+      service:
+        name: consul
+        state: restarted
+```
+
+~/ansible02/roles/install_consul_server/templates/consul_server.hcl
+
+```
+server           = true
+bootstrap_expect = 1
+data_dir         = "/opt/consul"
+bind_addr        = "0.0.0.0"
+client_addr      = "0.0.0.0"
+advertise_addr   = "{{ hostvars[inventory_hostname].advertise_addr }}"
+ui_config { enabled = true }
+connect  { enabled = true }
+addresses { http = "0.0.0.0" }
+retry_join = []
+```
+
+~/ansible02/roles/install_consul_client/tasks/main.yml
+
+```
+---
+- name: Repos | prerequisites
+  apt:
+    name: [ca-certificates, curl, gnupg, apt-transport-https]
+    state: present
+    update_cache: true
+
+- name: Hashicorp | keyring dir
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Hashicorp | GPG
+  shell: |
+    curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg
+  args: { creates: /etc/apt/keyrings/hashicorp.gpg }
+
+- name: Hashicorp | repo
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com jammy main"
+    filename: hashicorp
+    state: present
+
+- name: Consul | install
+  apt:
+    name: consul
+    state: present
+    update_cache: true
+
+- name: Envoy | try install from Ubuntu repo
+  apt:
+    name: envoy
+    state: present
+    update_cache: true
+  register: envoy_apt
+  failed_when: false
+
+- name: Envoy | setup getenvoy repo (fallback)
+  block:
+    - apt:
+        name: [ca-certificates, curl, gnupg, apt-transport-https]
+        state: present
+        update_cache: true
+    - shell: |
+        curl -1sLf 'https://dl.getenvoy.io/public/repo/gpg.DA418C88.pub' | gpg --dearmor -o /usr/share/keyrings/getenvoy.gpg
+      args: { creates: /usr/share/keyrings/getenvoy.gpg }
+    - apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/getenvoy.gpg] https://dl.getenvoy.io/public/repo/deb/ubuntu jammy main"
+        filename: getenvoy
+        state: present
+    - apt:
+        name: envoy
+        state: present
+        update_cache: true
+  when: envoy_apt is failed
+
+- name: Consul | dirs
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: consul
+    group: consul
+    mode: "0755"
+  loop:
+    - /opt/consul
+    - /etc/consul.d
+
+- name: Consul | client config
+  template:
+    src: consul_client.hcl
+    dest: /etc/consul.d/consul.hcl
+    owner: consul
+    group: consul
+    mode: "0644"
+
+- name: Systemd | consul-envoy template unit
+  copy:
+    dest: /etc/systemd/system/consul-envoy@.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Consul Envoy sidecar for %i
+      After=consul.service
+      Requires=consul.service
+
+      [Service]
+      ExecStart=/usr/bin/consul connect envoy -sidecar-for %i -admin-bind 0.0.0.0:19000
+      Restart=on-failure
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Consul | enable & start
+  service:
+    name: consul
+    enabled: true
+    state: started
+
+- name: Consul | reload
+  command: consul reload
+  changed_when: true
+```

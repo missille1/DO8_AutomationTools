@@ -1,0 +1,49 @@
+Vagrant.configure("2") do |config|
+  BOX = "ubuntu-22.04"
+  CPU = 2
+  RAM = 1300
+
+  NET = "192.168.56"
+  MANAGER_IP = "#{NET}.19"
+  CONSUL_IP  = "#{NET}.20"
+  API_IP     = "#{NET}.21"
+  DB_IP      = "#{NET}.22"
+
+  config.vm.define "manager" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "manager"
+    vm.vm.network "private_network", ip: MANAGER_IP
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU; vb.memory = RAM
+    end
+  end
+
+  config.vm.define "consul_server" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "consul-server"
+    vm.vm.network "private_network", ip: CONSUL_IP
+    vm.vm.network "forwarded_port", guest: 8500, host: 8500, host_ip: "127.0.0.1", auto_correct: true
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU; vb.memory = RAM
+    end
+  end
+
+  config.vm.define "api" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "api"
+    vm.vm.network "private_network", ip: API_IP
+    vm.vm.network "forwarded_port", guest: 8082, host: 8082, host_ip: "127.0.0.1", auto_correct: true
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU; vb.memory = RAM
+    end
+  end
+
+  config.vm.define "db" do |vm|
+    vm.vm.box = BOX
+    vm.vm.hostname = "db"
+    vm.vm.network "private_network", ip: DB_IP
+    vm.vm.provider "virtualbox" do |vb|
+      vb.cpus = CPU; vb.memory = RAM
+    end
+  end
+end
