@@ -749,11 +749,19 @@ psql "postgresql://postgres:pgpass@192.168.56.12:5432/school21" -c 'TABLE public
 <details>
 
 
+## Part 2. Service Discovery
+
+### В этой главе сымитировал два удаленных сервиса — api и БД, и осуществил между ними подключение через Service Discovery с использованием Consul.
+
+### Создал с помощью Vagrant четыре машины: consul_server, api, manager и db.
+
+<details>
+<summary>Vagrant конфиг</summary>
 
 ```ruby
 Vagrant.configure("2") do |config|
   BOX = "ubuntu-22.04"
-  CPU = 2
+  CPU = 4
   RAM = 1300
 
   NET = "192.168.56"
@@ -802,51 +810,13 @@ Vagrant.configure("2") do |config|
 end
 ```
 
-прокидывание ключей 
+<details>
+
+#### Прокидываем ключи как в part1 на все машины. Устанавливаем ansible и дополнение psql для ansible на manager. Инициализируем роли. 
+
+Создание ролей
+
 ```bash
-
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
-
-mkdir -p /tmp/ansible02
-
-vagrant ssh manager -c "cat ~/.ssh/id_ed25519.pub" > /tmp/ansible02/manager.pub
-
-vagrant upload /tmp/ansible02/manager.pub /home/vagrant/manager.pub db
-
-vagrant ssh db -c "cat /home/vagrant/manager.pub >> ~vagrant/.ssh/authorized_keys \
-  && rm /home/vagrant/manager.pub"
-
-ssh vagrant@192.168.56.21 "echo OK && hostname -f"
-```
-
-закидываем сервис hotel и сборка
-```bash
-vagrant upload ../services/hotel-service /home/vagrant/hotel-service manager
-
-sudo apt install -y wget curl gnupg2 software-properties-common
-
-sudo add-apt-repository -y ppa:openjdk-r/ppa
-
-sudo apt update
-
-sudo apt install -y openjdk-8-jdk
-
-java -version
-
-sudo apt install -y maven
-
-mvn -version
-
-cd hotel-service/
-
-mvn clean package -DskipTests
-
-ls target/*.jar
-```
-
-создание ролей
-```bash
-sudo apt install ansible
 mkdir -p ~/ansible02/roles
 cd ~/ansible02
 ansible-galaxy init roles/install_consul_server
@@ -855,16 +825,106 @@ ansible-galaxy init roles/install_db
 ansible-galaxy init roles/install_hotels_service
 ```
 
-~/ansible02/inventory.yml
+#### Написал два конфигурационных файла для consul consul_server.hcl, настроить агент как сервер и consul_client.hcl, настроил агент как клиент. Положил на maneger ~/ansible02/consul01/. Скачал бинарники consul и envoy и положил на maneger ~/ansible02/consul01/. Для envoy написал json для db и api.
+
+<details>
+<summary>consul сервер, агент и конфиги json для envoy</summary>
+
+```hcl
+# consul_server.hcl
+datacenter     = "dc1"
+node_name      = "consul_server"
+data_dir       = "/opt/consul/data"
+
+bind_addr      = "192.168.56.20"
+advertise_addr = "192.168.56.20"
+
+server           = true
+bootstrap_expect = 1
+
+client_addr = "0.0.0.0"
+ui_config { enabled = true }
+
+connect { enabled = true }
+
+# Явно открываем gRPC-порт для Envoy/xDS
+ports { grpc = 8502 }
 ```
+
+```
+datacenter = "dc1"
+
+server   = false
+data_dir = "/opt/consul/data"
+
+bind_addr   = "0.0.0.0"
+client_addr = "0.0.0.0"
+
+# IP интерфейса, попадающего в нашу подсеть 192.168.56.0/24
+advertise_addr = "{{ GetPrivateInterfaces | include \"network\" \"192.168.56.0/24\" | attr \"address\" }}"
+
+connect  { enabled = true }
+addresses { http = "0.0.0.0" }
+ports     { grpc = 8502 }
+
+# IP сервера Consul (consul_server): 192.168.56.20
+retry_join = ["192.168.56.20"]
+```
+
+```json
+{
+  "service": {
+    "name": "hotel",
+    "port": 8082,
+    "check": { "tcp": "127.0.0.1:8082", "interval": "10s", "timeout": "3s" },
+    "connect": {
+      "sidecar_service": {
+        "proxy": {
+          "upstreams": [
+            { "destination_name": "postgres", "local_bind_port": 5432 }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+```json
+{
+  "service": {
+    "name": "postgres",
+    "port": 5432,
+    "check": {
+      "name": "Postgres TCP Check",
+      "tcp": "127.0.0.1:5432",
+      "interval": "10s",
+      "timeout": "1s"
+    },
+    "connect": {
+      "sidecar_service": {
+        "port": 21001  
+      }
+    }
+  }
+}
+```
+<details>
+
+#### Загрузил на manager сервис отелей
+
+```bash
+vagrant upload ../services/hotel-service /home/vagrant/hotel-service manager 
+```
+
+#### Написал ansible inventory.yml  и site.yml
+
+```yml
 all:
   vars:
     ansible_user: vagrant
     consul_server_ip: 192.168.56.20
   hosts:
-    manager:
-      ansible_host: 192.168.56.19
-      advertise_addr: 192.168.56.19
     consul_server:
       ansible_host: 192.168.56.20
       advertise_addr: 192.168.56.20
@@ -875,8 +935,8 @@ all:
       ansible_host: 192.168.56.22
       advertise_addr: 192.168.56.22
 ```
-~/ansible02/site.yml
-```
+
+```yml
 ---
 - name: Consul server
   hosts: consul_server
@@ -899,241 +959,447 @@ all:
   roles: [install_hotels_service]
 ```
 
-```bash
-ansible-galaxy collection install community.postgresql
-```
+#### Написал роль ansible Install_consul_server, которая:
+- работает с consul_server;
+- копирует consul_server.hcl;
+- устанавливает consul и необходимые для consul зависимости;
+- запускает сервис consul;
 
-Роль install_consul_server
+<details>
+<summary>tasks Install_consul_server</summary>
 
-~/ansible02/roles/install_consul_server/tasks/main.yml
-
-```
+```yml
 ---
-- name: Install Consul from zip (minimal changes)
-  hosts: all
-  become: true
+- name: Install Consul | Check if Consul binary already installed
+  stat:
+    path: "{{ consul_bin_path }}"
+  register: consul_bin
 
-  vars:
-    consul_version: "1.21.5"
-    consul_arch: "amd64"
-    consul_zip_url: "https://releases.hashicorp.com/consul/{{ consul_version }}/consul_{{ consul_version }}_linux_{{ consul_arch }}.zip"
-    consul_zip_path: "/tmp/consul_{{ consul_version }}_linux_{{ consul_arch }}.zip"
-    consul_unzip_dir: "/tmp/consul_{{ consul_version }}"
-
-  tasks:
-    - name: Install necessary packages for Consul
-      apt:
-        name:
-          - curl
-          - unzip
-        state: present
-        update_cache: true
-
-    - name: Download Consul zip
-      get_url:
-        url: "{{ consul_zip_url }}"
-        dest: "{{ consul_zip_path }}"
-        mode: "0644"
-
-    - name: Unzip Consul archive (get consul binary)
-      unarchive:
-        src: "{{ consul_zip_path }}"
-        dest: "{{ consul_unzip_dir }}"
-        remote_src: true
-        creates: "{{ consul_unzip_dir }}/consul"
-
-    - name: Copy Consul binary to /usr/local/bin
-      copy:
-        src: "{{ consul_unzip_dir }}/consul"
-        dest: /usr/local/bin/consul
-        mode: '0755'
-        owner: root
-        group: root
-        remote_src: true
-
-    - name: Create directories for Consul
-      file:
-        path: "{{ item }}"
-        state: directory
-      loop:
-        - /opt/consul
-        - /opt/consul/data
-        - /etc/consul.d
-        - /etc/consul.d/certs
-
-    - name: Copy Consul server configuration file
-      template:
-        src: ~/ansible02/roles/install_consul_server/templates/consul_server.hcl
-        dest: /etc/consul.d/consul.hcl
-      notify: restart consul
-
-    - name: Create Consul systemd service file
-      copy:
-        dest: /etc/systemd/system/consul.service
-        content: |
-          [Unit]
-          Description=Consul
-          Requires=network-online.target
-          After=network-online.target
-
-          [Service]
-          ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d
-          ExecReload=/usr/local/bin/consul reload
-          KillMode=process
-          Restart=on-failure
-          RestartSec=30
-
-          [Install]
-          WantedBy=multi-user.target
-        mode: '0644'
-      notify: restart consul
-
-    - name: Ensure systemd reloads units and Consul is started
-      service:
-        name: consul
-        state: started
-        enabled: true
-        daemon_reload: yes
-
-  handlers:
-    - name: daemon-reload
-      systemd:
-        daemon_reload: true
-
-    - name: restart consul
-      service:
-        name: consul
-        state: restarted
-```
-
-~/ansible02/roles/install_consul_server/templates/consul_server.hcl
-
-```
-server           = true
-bootstrap_expect = 1
-data_dir         = "/opt/consul"
-bind_addr        = "0.0.0.0"
-client_addr      = "0.0.0.0"
-advertise_addr   = "{{ hostvars[inventory_hostname].advertise_addr }}"
-ui_config { enabled = true }
-connect  { enabled = true }
-addresses { http = "0.0.0.0" }
-retry_join = []
-```
-
-~/ansible02/roles/install_consul_client/tasks/main.yml
-
-```
----
-- name: Repos | prerequisites
-  apt:
-    name: [ca-certificates, curl, gnupg, apt-transport-https]
-    state: present
-    update_cache: true
-
-- name: Hashicorp | keyring dir
-  file:
-    path: /etc/apt/keyrings
-    state: directory
+- name: Install Consul | Copy Consul binary to /usr/local/bin (from {{ base_dir }}/consul)
+  copy:
+    src: "{{ base_dir }}/consul"
+    dest: "{{ consul_bin_path }}"
     mode: "0755"
+    owner: root
+    group: root
 
-- name: Hashicorp | GPG
-  shell: |
-    curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg
-  args: { creates: /etc/apt/keyrings/hashicorp.gpg }
-
-- name: Hashicorp | repo
-  apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com jammy main"
-    filename: hashicorp
-    state: present
-
-- name: Consul | install
-  apt:
-    name: consul
-    state: present
-    update_cache: true
-
-- name: Envoy | try install from Ubuntu repo
-  apt:
-    name: envoy
-    state: present
-    update_cache: true
-  register: envoy_apt
-  failed_when: false
-
-- name: Envoy | setup getenvoy repo (fallback)
-  block:
-    - apt:
-        name: [ca-certificates, curl, gnupg, apt-transport-https]
-        state: present
-        update_cache: true
-    - shell: |
-        curl -1sLf 'https://dl.getenvoy.io/public/repo/gpg.DA418C88.pub' | gpg --dearmor -o /usr/share/keyrings/getenvoy.gpg
-      args: { creates: /usr/share/keyrings/getenvoy.gpg }
-    - apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/getenvoy.gpg] https://dl.getenvoy.io/public/repo/deb/ubuntu jammy main"
-        filename: getenvoy
-        state: present
-    - apt:
-        name: envoy
-        state: present
-        update_cache: true
-  when: envoy_apt is failed
-
-- name: Consul | dirs
+- name: Install Consul | Create Consul dirs
   file:
     path: "{{ item }}"
     state: directory
-    owner: consul
-    group: consul
     mode: "0755"
   loop:
     - /opt/consul
+    - /opt/consul/data
     - /etc/consul.d
 
-- name: Consul | client config
-  template:
-    src: consul_client.hcl
+- name: Install Consul | Server config (static HCL)
+  copy:
+    src: "{{ base_dir }}/consul_server.hcl"
     dest: /etc/consul.d/consul.hcl
-    owner: consul
-    group: consul
     mode: "0644"
+  notify:
+    - daemon-reload
+    - restart consul
 
-- name: Systemd | consul-envoy template unit
+- name: Install Consul | Systemd unit for Consul
+  copy:
+    dest: /etc/systemd/system/consul.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Consul Server
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      ExecStart={{ consul_bin_path }} agent -config-dir=/etc/consul.d -data-dir=/opt/consul
+      ExecReload={{ consul_bin_path }} reload
+      Restart=on-failure
+      RestartSec=5
+      LimitNOFILE=65536
+
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - daemon-reload
+    - restart consul
+
+- name: Install Consul | Ensure Consul started
+  service:
+    name: consul
+    state: started
+    enabled: true
+
+- name: Install Consul | Consul reload (apply config)
+  command: consul reload
+  changed_when: true
+```
+
+<details>
+
+
+#### Написал роль ansible Install_consul_client, которая:
+- работает с api и db;
+- копирует consul_client.hcl;
+- устанавливает consul, envoy и необходимые для consul зависимости;
+- запускает сервис consul и consul-envoy;
+
+<details>
+<summary>tasks Install_consul_client</summary>
+
+```yml
+---
+# ==== бинарники ====
+- name: Consul | Check binary
+  stat:
+    path: "{{ consul_bin_path }}"
+  register: consul_bin
+
+- name: Consul | Install binary from {{ base_dir }}/consul
+  copy:
+    src: "{{ base_dir }}/consul"
+    dest: "{{ consul_bin_path }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: not consul_bin.stat.exists
+
+- name: Envoy | Check binary
+  stat:
+    path: "{{ envoy_bin_path }}"
+  register: envoy_bin
+
+- name: Envoy | Install binary from {{ base_dir }}/envoy
+  copy:
+    src: "{{ base_dir }}/envoy"
+    dest: "{{ envoy_bin_path }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: not envoy_bin.stat.exists
+
+# ==== директории и конфиг агента ====
+- name: Create Consul directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/consul
+    - /opt/consul/data
+    - /etc/consul.d
+    - /etc/consul.d/certs
+
+- name: Put Consul client config (static HCL)
+  copy:
+    src: "{{ base_dir }}/consul_client.hcl"
+    dest: /etc/consul.d/consul.hcl
+    mode: "0644"
+  notify: restart consul
+
+# ==== регистрации сервисов (JSON) ====
+- name: Put hotel service JSON (api only)
+  when: inventory_hostname == "api"
+  copy:
+    src: "{{ base_dir }}/hotel.json"
+    dest: /etc/consul.d/hotel.json
+    mode: "0644"
+  register: hotel_json
+
+- name: Put postgres service JSON (db only)
+  when: inventory_hostname == "db"
+  copy:
+    src: "{{ base_dir }}/postgres.json"
+    dest: /etc/consul.d/postgres.json
+    mode: "0644"
+  register: pg_json
+
+- name: Consul | reload to apply service defs
+  command: consul reload
+  changed_when: true
+  when: (hotel_json is defined and hotel_json.changed) or
+        (pg_json   is defined and pg_json.changed)
+
+# ==== systemd: два отдельных сервиса ====
+- name: Create Consul systemd unit (client)
+  copy:
+    dest: /etc/systemd/system/consul.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Consul Client
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      ExecStart={{ consul_bin_path }} agent -config-dir=/etc/consul.d -data-dir=/opt/consul
+      ExecReload={{ consul_bin_path }} reload
+      Restart=on-failure
+      RestartSec=5
+      LimitNOFILE=65536
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: daemon-reload
+
+- name: Create consul-envoy@.service template
   copy:
     dest: /etc/systemd/system/consul-envoy@.service
     mode: "0644"
     content: |
       [Unit]
       Description=Consul Envoy sidecar for %i
-      After=consul.service
       Requires=consul.service
+      After=consul.service
 
       [Service]
-      ExecStart=/usr/bin/consul connect envoy -sidecar-for %i -admin-bind 0.0.0.0:19000
+      ExecStart={{ consul_bin_path }} connect envoy -sidecar-for %i -envoy-binary {{ envoy_bin_path }} -ignore-envoy-compatibility
       Restart=on-failure
+      RestartSec=5
 
       [Install]
       WantedBy=multi-user.target
+  notify: daemon-reload
 
-- name: Consul | enable & start
+# ==== стартуем ====
+- name: Ensure Consul started
   service:
     name: consul
+    state: started
+    enabled: true
+    daemon_reload: yes
+```
+
+<details>
+
+
+#### Написал роль ansible install_db, которая:
+- работает с db;
+- устанавливает postgres и запускает его;
+- создает базу данных hotels_db;
+
+<details>
+<summary>tasks Install_db</summary>
+
+```yml
+- name: Apt | install postgres
+  apt:
+    name:
+      - "postgresql-{{ pg_version }}"
+      - postgresql-contrib
+      - python3-psycopg2
+      - acl
+    state: present
+    update_cache: true
+
+- name: Postgres | ensure started
+  service:
+    name: postgresql
     enabled: true
     state: started
+
+- name: Postgres | ensure localhost auth
+  lineinfile:
+    path: "/etc/postgresql/{{ pg_version }}/main/pg_hba.conf"
+    regexp: '^host\s+all\s+all\s+127\.0\.0\.1/32\s+.*$'
+    line: 'host    all     all     127.0.0.1/32   scram-sha-256'
+  notify: Restart Postgres
+
+- name: DB | create user & db
+  become_user: postgres
+  block:
+    - community.postgresql.postgresql_user:
+        name: "{{ pg_user }}"
+        password: "{{ pg_password }}"
+        role_attr_flags: "LOGIN"
+    - community.postgresql.postgresql_db:
+        name: "{{ pg_db }}"
+        owner: "{{ pg_user }}"
 
 - name: Consul | reload
   command: consul reload
   changed_when: true
+
+- name: Sidecar | enable & start
+  service:
+    name: "consul-envoy@postgres"
+    enabled: true
+    state: started
+    daemon_reload: yes
+
+- name: Postgres | local ping
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ pg_db }}"
+    query: "SELECT 1;"
+  changed_when: false
 ```
+
+<details>
+
+
+#### Написал роль ansible install_hotels_service, которая:
+- работает с api;
+- копирует исходный код сервиса;
+- устанавливает openjdk-8-jdk;
+- создает глобальные переменные окружения:
+  - POSTGRES_HOST="127.0.0.1";
+  - POSTGRES_PORT="5432";
+  - POSTGRES_DB="hotels_db";
+  - POSTGRES_USER="<имя пользователя>";
+  - POSTGRES_PASSWORD="<пароль пользователя>";
+- запускает собранный jar-файл командой java -jar <путь до hotel-service>/hotel-service/target/<имя jar-файла>.jar.
+
+<details>
+<summary>tasks Install_consul_server</summary>
+
+```yml
+---
+# ===== Java/Maven =====
+- name: Java | prerequisites for PPA
+  apt:
+    name:
+      - wget
+      - curl
+      - gnupg2
+      - software-properties-common
+    state: present
+    update_cache: true
+
+- name: Java | add OpenJDK PPA (openjdk-r)
+  apt_repository:
+    repo: "ppa:openjdk-r/ppa"
+    state: present
+    update_cache: true
+
+- name: Java | install OpenJDK 8 (JRE/JDK для запуска)
+  apt:
+    name: openjdk-8-jdk
+    state: present
+    update_cache: true
+
+# Проверяем, есть ли уже готовый jar
+- name: App | check runnable jar presence
+  stat:
+    path: "{{ hotel_dest_dir }}/hotel-service.jar"
+  register: hotel_jar
+
+- name: Maven | install (нужен только если будем собирать)
+  apt:
+    name: maven
+    state: present
+    update_cache: true
+  when: not hotel_jar.stat.exists
+
+# ===== Код приложения / сборка =====
+- name: App | create dest dir
+  file:
+    path: "{{ hotel_dest_dir }}"
+    state: directory
+    mode: "0755"
+
+# Копируем только если jar ещё не готов
+- name: App | copy sources from manager to api
+  copy:
+    src: "{{ hotel_src_dir_mgr }}/"
+    dest: "{{ hotel_dest_dir }}/"
+    mode: "0644"
+    directory_mode: "0755"
+  when: not hotel_jar.stat.exists
+
+# Собираем только если jar ещё не готов
+- name: Build | mvn clean package -DskipTests
+  command: mvn clean package -DskipTests
+  args:
+    chdir: "{{ hotel_dest_dir }}"
+  environment:
+    JAVA_HOME: "/usr/lib/jvm/java-8-openjdk-amd64"
+  register: mvn_build
+  changed_when: "'BUILD SUCCESS' in mvn_build.stdout or 'BUILD SUCCESS' in mvn_build.stderr"
+  when: not hotel_jar.stat.exists
+
+- name: Build | find built jar
+  find:
+    paths: "{{ hotel_dest_dir }}/target"
+    patterns: "*.jar"
+    file_type: file
+  register: jar_find
+  when: not hotel_jar.stat.exists
+
+- name: Build | fail if jar not found
+  fail:
+    msg: "Не найден jar в {{ hotel_dest_dir }}/target. Проверь сборку Maven."
+  when: not hotel_jar.stat.exists and (jar_find.files | length == 0)
+
+- name: Build | place runnable jar
+  copy:
+    src: "{{ jar_find.files[0].path }}"
+    dest: "{{ hotel_dest_dir }}/hotel-service.jar"
+    mode: "0755"
+    remote_src: true
+  when: not hotel_jar.stat.exists
+  notify:
+    - restart hotel
+
+# ===== Конфиг окружения и юниты =====
+- name: Env | write env file
+  copy:
+    dest: /etc/hotel-service.env
+    mode: "0644"
+    content: |
+      POSTGRES_HOST={{ hotel_pg_host }}
+      POSTGRES_PORT={{ hotel_pg_port }}
+      POSTGRES_DB={{ hotel_pg_db }}
+      POSTGRES_USER={{ hotel_pg_user }}
+      POSTGRES_PASSWORD={{ hotel_pg_password }}
+
+- name: Systemd | unit for hotel
+  copy:
+    dest: /etc/systemd/system/hotel.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Hotel Service
+      After=network-online.target consul.service
+      Wants=network-online.target consul.service
+      [Service]
+      EnvironmentFile=/etc/hotel-service.env
+      WorkingDirectory={{ hotel_dest_dir }}
+      ExecStart=/usr/bin/java -jar {{ hotel_dest_dir }}/hotel-service.jar --server.port={{ hotel_port }}
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - daemon-reload
+
+# ===== Запуск =====
+- name: Services | enable hotel
+  service:
+    name: hotel
+    enabled: true
+    state: started
+    daemon_reload: yes
+
+- name: Sidecar | enable & start for hotel
+  service:
+    name: "consul-envoy@hotel"
+    enabled: true
+    state: started
+    daemon_reload: yes
+```
+
+<details>
+
+#### Запускаем наш ansible и видим корректную отработку всех play's
 
 ```bash
 ansible-playbook -i inventory.yml site.yml
 ```
 
+<img src="img/ansible02play.png">
 
-
+#### Проверяем работу консул и api через браузер хоста
 
 ```
 consul
@@ -1143,8 +1409,23 @@ api
 http://127.0.0.1:8082/
 ```
 
+<details>
+<summary>Скрины consul и api</summary>
 
-CRUD 
+<img src="img/consul_work.png">
+
+<img src="img/consul_nodes.png">
+
+<img src="img/consul_api.png">
+
+<img src="img/consul_bd.png">
+
+<img src="img/api_hotel.png">
+
+<details>
+
+#### Проверяем работоспособность CRUD-операций над сервисом отелей. Результаты тестирования.
+ 
 ```bash
 UUID=$(cat /proc/sys/kernel/random/uuid)
 
@@ -1172,3 +1453,16 @@ curl -i -X PUT http://127.0.0.1:8082/hotels/1 \
 
 curl -i -X DELETE http://127.0.0.1:8082/hotels/1
 ```
+
+<details>
+<summary>CRUD</summary>
+
+<img src="img/CRUD_POST_WORK.png">
+
+<img src="img/CRUD_READ_WORK.png">
+
+<img src="img/CRUD_PUT_FAILED.png">
+
+<img src="img/CRUD_DEL_FAILED.png">
+
+<details>
