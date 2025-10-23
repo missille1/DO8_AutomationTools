@@ -1,5 +1,4 @@
 ---
-# handlers file for roles/postgres
 - name: Restart Postgres
   service:
     name: postgresql

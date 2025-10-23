@@ -1,0 +1,11 @@
+---
+hotel_src_dir_mgr: "/home/vagrant/hotel-service"
+hotel_dest_dir: "/opt/hotel-service"
+hotel_port: 8082
+
+hotel_pg_host: "127.0.0.1"
+hotel_pg_port: "5432"
+hotel_pg_db: "hotels_db"
+hotel_pg_user: "hotel_user"
+hotel_pg_password: "hotel_pass"
+

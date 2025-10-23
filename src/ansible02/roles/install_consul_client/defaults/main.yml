@@ -1,0 +1,8 @@
+base_dir: "/home/vagrant/ansible02/consul01"
+consul_bin_path: "/usr/local/bin/consul"
+envoy_bin_path:  "/usr/local/bin/envoy"
+
+# какие sidecar-инстансы включать на каждой ноде
+api_service_id: "hotel"
+db_service_id:  "postgres"
+

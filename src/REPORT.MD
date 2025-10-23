@@ -1,3 +1,9 @@
+## Part 1. Удаленное конфигурирование узла через Ansible
+
+### Создал с помощью Vagrant три машины: manager, node01, node02. Не устанавливал с помощью shell-скриптов docker при создании машин на Vagrant! Прокинул порты node01 на локальную машину для доступа к пока еще не развернутому микросервисному приложению.
+
+<details>
+<summary>**Vagrant конфиг**</summary>
 
 ```ruby
 Vagrant.configure("2") do |config|
@@ -47,6 +53,7 @@ Vagrant.configure("2") do |config|
   end
 end
 ```
+</details>
 
 
 Прокидывания ключа на node01 и node02 c manager
@@ -632,12 +639,16 @@ ansible-galaxy collection install community.postgresql
         dest: /etc/systemd/system/consul.service
         content: |
           [Unit]
-          Description=Consul Service
-          After=network.target
+          Description=Consul
+          Requires=network-online.target
+          After=network-online.target
 
           [Service]
           ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d
+          ExecReload=/usr/local/bin/consul reload
+          KillMode=process
           Restart=on-failure
+          RestartSec=30
 
           [Install]
           WantedBy=multi-user.target
@@ -782,4 +793,49 @@ retry_join = []
 - name: Consul | reload
   command: consul reload
   changed_when: true
+```
+
+```bash
+ansible-playbook -i inventory.yml site.yml
+```
+
+
+
+
+```
+consul
+http://127.0.0.1:8500/
+
+api
+http://127.0.0.1:8082/
+```
+
+
+CRUD 
+```bash
+UUID=$(cat /proc/sys/kernel/random/uuid)
+
+curl -i -X POST http://127.0.0.1:8082/hotels \
+  -H "Content-Type: application/json" \
+  -d "{
+        \"hotelUid\":\"$UUID\",
+        \"rooms\":50,
+        \"cost\":1500,
+        \"name\":\"School21\",
+        \"address\":\"Ramonagr\"
+      }"
+
+curl -s http://127.0.0.1:8082/hotels | grep -A3 School21 || true
+
+curl -i -X PUT http://127.0.0.1:8082/hotels/1 \
+  -H "Content-Type: application/json" \
+  -d '{
+        "hotelUid":"5ce46f1b-3c46-4227-b333-a35d6c9a00ac",
+        "rooms":60,
+        "cost":1700,
+        "name":"School21 (updated)",
+        "address":"Ramonagr, bld. 2"
+      }'
+
+curl -i -X DELETE http://127.0.0.1:8082/hotels/1
 ```

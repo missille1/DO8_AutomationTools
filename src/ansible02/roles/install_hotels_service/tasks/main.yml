@@ -1,0 +1,133 @@
+---
+# ===== Java/Maven =====
+- name: Java | prerequisites for PPA
+  apt:
+    name:
+      - wget
+      - curl
+      - gnupg2
+      - software-properties-common
+    state: present
+    update_cache: true
+
+- name: Java | add OpenJDK PPA (openjdk-r)
+  apt_repository:
+    repo: "ppa:openjdk-r/ppa"
+    state: present
+    update_cache: true
+
+- name: Java | install OpenJDK 8 (JRE/JDK для запуска)
+  apt:
+    name: openjdk-8-jdk
+    state: present
+    update_cache: true
+
+# Проверяем, есть ли уже готовый jar
+- name: App | check runnable jar presence
+  stat:
+    path: "{{ hotel_dest_dir }}/hotel-service.jar"
+  register: hotel_jar
+
+- name: Maven | install (нужен только если будем собирать)
+  apt:
+    name: maven
+    state: present
+    update_cache: true
+  when: not hotel_jar.stat.exists
+
+# ===== Код приложения / сборка =====
+- name: App | create dest dir
+  file:
+    path: "{{ hotel_dest_dir }}"
+    state: directory
+    mode: "0755"
+
+# Копируем только если jar ещё не готов
+- name: App | copy sources from manager to api
+  copy:
+    src: "{{ hotel_src_dir_mgr }}/"
+    dest: "{{ hotel_dest_dir }}/"
+    mode: "0644"
+    directory_mode: "0755"
+  when: not hotel_jar.stat.exists
+
+# Собираем только если jar ещё не готов
+- name: Build | mvn clean package -DskipTests
+  command: mvn clean package -DskipTests
+  args:
+    chdir: "{{ hotel_dest_dir }}"
+  environment:
+    JAVA_HOME: "/usr/lib/jvm/java-8-openjdk-amd64"
+  register: mvn_build
+  changed_when: "'BUILD SUCCESS' in mvn_build.stdout or 'BUILD SUCCESS' in mvn_build.stderr"
+  when: not hotel_jar.stat.exists
+
+- name: Build | find built jar
+  find:
+    paths: "{{ hotel_dest_dir }}/target"
+    patterns: "*.jar"
+    file_type: file
+  register: jar_find
+  when: not hotel_jar.stat.exists
+
+- name: Build | fail if jar not found
+  fail:
+    msg: "Не найден jar в {{ hotel_dest_dir }}/target. Проверь сборку Maven."
+  when: not hotel_jar.stat.exists and (jar_find.files | length == 0)
+
+- name: Build | place runnable jar
+  copy:
+    src: "{{ jar_find.files[0].path }}"
+    dest: "{{ hotel_dest_dir }}/hotel-service.jar"
+    mode: "0755"
+    remote_src: true
+  when: not hotel_jar.stat.exists
+  notify:
+    - restart hotel
+
+# ===== Конфиг окружения и юниты =====
+- name: Env | write env file
+  copy:
+    dest: /etc/hotel-service.env
+    mode: "0644"
+    content: |
+      POSTGRES_HOST={{ hotel_pg_host }}
+      POSTGRES_PORT={{ hotel_pg_port }}
+      POSTGRES_DB={{ hotel_pg_db }}
+      POSTGRES_USER={{ hotel_pg_user }}
+      POSTGRES_PASSWORD={{ hotel_pg_password }}
+
+- name: Systemd | unit for hotel
+  copy:
+    dest: /etc/systemd/system/hotel.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Hotel Service
+      After=network-online.target consul.service
+      Wants=network-online.target consul.service
+      [Service]
+      EnvironmentFile=/etc/hotel-service.env
+      WorkingDirectory={{ hotel_dest_dir }}
+      ExecStart=/usr/bin/java -jar {{ hotel_dest_dir }}/hotel-service.jar --server.port={{ hotel_port }}
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - daemon-reload
+
+# ===== Запуск =====
+- name: Services | enable hotel
+  service:
+    name: hotel
+    enabled: true
+    state: started
+    daemon_reload: yes
+
+- name: Sidecar | enable & start for hotel
+  service:
+    name: "consul-envoy@hotel"
+    enabled: true
+    state: started
+    daemon_reload: yes
+

@@ -1,0 +1,21 @@
+---
+- name: Consul server
+  hosts: consul_server
+  become: true
+  roles: [install_consul_server]
+
+- name: Consul clients
+  hosts: api,db
+  become: true
+  roles: [install_consul_client]
+
+- name: Postgres on db
+  hosts: db
+  become: true
+  roles: [install_db]
+
+- name: Hotels service on api
+  hosts: api
+  become: true
+  roles: [install_hotels_service]
+

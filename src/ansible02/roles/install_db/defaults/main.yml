@@ -1,0 +1,6 @@
+---
+pg_version: "14"
+pg_db: "hotels_db"
+pg_user: "hotel_user"
+pg_password: "hotel_pass"
+

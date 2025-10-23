@@ -1,0 +1,52 @@
+- name: Apt | install postgres
+  apt:
+    name:
+      - "postgresql-{{ pg_version }}"
+      - postgresql-contrib
+      - python3-psycopg2
+      - acl
+    state: present
+    update_cache: true
+
+- name: Postgres | ensure started
+  service:
+    name: postgresql
+    enabled: true
+    state: started
+
+- name: Postgres | ensure localhost auth
+  lineinfile:
+    path: "/etc/postgresql/{{ pg_version }}/main/pg_hba.conf"
+    regexp: '^host\s+all\s+all\s+127\.0\.0\.1/32\s+.*$'
+    line: 'host    all     all     127.0.0.1/32   scram-sha-256'
+  notify: Restart Postgres
+
+- name: DB | create user & db
+  become_user: postgres
+  block:
+    - community.postgresql.postgresql_user:
+        name: "{{ pg_user }}"
+        password: "{{ pg_password }}"
+        role_attr_flags: "LOGIN"
+    - community.postgresql.postgresql_db:
+        name: "{{ pg_db }}"
+        owner: "{{ pg_user }}"
+
+- name: Consul | reload
+  command: consul reload
+  changed_when: true
+
+- name: Sidecar | enable & start
+  service:
+    name: "consul-envoy@postgres"
+    enabled: true
+    state: started
+    daemon_reload: yes
+
+- name: Postgres | local ping
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ pg_db }}"
+    query: "SELECT 1;"
+  changed_when: false
+

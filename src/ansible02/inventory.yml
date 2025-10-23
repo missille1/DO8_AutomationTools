@@ -1,0 +1,14 @@
+all:
+  vars:
+    ansible_user: vagrant
+    consul_server_ip: 192.168.56.20
+  hosts:
+    consul_server:
+      ansible_host: 192.168.56.20
+      advertise_addr: 192.168.56.20
+    api:
+      ansible_host: 192.168.56.21
+      advertise_addr: 192.168.56.21
+    db:
+      ansible_host: 192.168.56.22
+      advertise_addr: 192.168.56.22

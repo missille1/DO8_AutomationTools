@@ -1,0 +1,121 @@
+---
+# ==== бинарники ====
+- name: Consul | Check binary
+  stat:
+    path: "{{ consul_bin_path }}"
+  register: consul_bin
+
+- name: Consul | Install binary from {{ base_dir }}/consul
+  copy:
+    src: "{{ base_dir }}/consul"
+    dest: "{{ consul_bin_path }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: not consul_bin.stat.exists
+
+- name: Envoy | Check binary
+  stat:
+    path: "{{ envoy_bin_path }}"
+  register: envoy_bin
+
+- name: Envoy | Install binary from {{ base_dir }}/envoy
+  copy:
+    src: "{{ base_dir }}/envoy"
+    dest: "{{ envoy_bin_path }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: not envoy_bin.stat.exists
+
+# ==== директории и конфиг агента ====
+- name: Create Consul directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/consul
+    - /opt/consul/data
+    - /etc/consul.d
+    - /etc/consul.d/certs
+
+- name: Put Consul client config (static HCL)
+  copy:
+    src: "{{ base_dir }}/consul_client.hcl"
+    dest: /etc/consul.d/consul.hcl
+    mode: "0644"
+  notify: restart consul
+
+# ==== регистрации сервисов (JSON) ====
+- name: Put hotel service JSON (api only)
+  when: inventory_hostname == "api"
+  copy:
+    src: "{{ base_dir }}/hotel.json"
+    dest: /etc/consul.d/hotel.json
+    mode: "0644"
+  register: hotel_json
+
+- name: Put postgres service JSON (db only)
+  when: inventory_hostname == "db"
+  copy:
+    src: "{{ base_dir }}/postgres.json"
+    dest: /etc/consul.d/postgres.json
+    mode: "0644"
+  register: pg_json
+
+- name: Consul | reload to apply service defs
+  command: consul reload
+  changed_when: true
+  when: (hotel_json is defined and hotel_json.changed) or
+        (pg_json   is defined and pg_json.changed)
+
+# ==== systemd: два отдельных сервиса ====
+- name: Create Consul systemd unit (client)
+  copy:
+    dest: /etc/systemd/system/consul.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Consul Client
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      ExecStart={{ consul_bin_path }} agent -config-dir=/etc/consul.d -data-dir=/opt/consul
+      ExecReload={{ consul_bin_path }} reload
+      Restart=on-failure
+      RestartSec=5
+      LimitNOFILE=65536
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: daemon-reload
+
+- name: Create consul-envoy@.service template
+  copy:
+    dest: /etc/systemd/system/consul-envoy@.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Consul Envoy sidecar for %i
+      Requires=consul.service
+      After=consul.service
+
+      [Service]
+      ExecStart={{ consul_bin_path }} connect envoy -sidecar-for %i -envoy-binary {{ envoy_bin_path }} -ignore-envoy-compatibility
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: daemon-reload
+
+# ==== стартуем ====
+- name: Ensure Consul started
+  service:
+    name: consul
+    state: started
+    enabled: true
+    daemon_reload: yes
+

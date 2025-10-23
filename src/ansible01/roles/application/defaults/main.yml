@@ -1,4 +1,5 @@
 ---
+# defaults file for roles/application
 app_src_dir: /home/vagrant/services
 app_dest_dir: /home/vagrant/services
 compose_file: "{{ app_dest_dir }}/docker-compose.yml"

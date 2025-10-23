@@ -1,0 +1,66 @@
+---
+- name: Install Consul | Check if Consul binary already installed
+  stat:
+    path: "{{ consul_bin_path }}"
+  register: consul_bin
+
+- name: Install Consul | Copy Consul binary to /usr/local/bin (from {{ base_dir }}/consul)
+  copy:
+    src: "{{ base_dir }}/consul"
+    dest: "{{ consul_bin_path }}"
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Install Consul | Create Consul dirs
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/consul
+    - /opt/consul/data
+    - /etc/consul.d
+
+- name: Install Consul | Server config (static HCL)
+  copy:
+    src: "{{ base_dir }}/consul_server.hcl"
+    dest: /etc/consul.d/consul.hcl
+    mode: "0644"
+  notify:
+    - daemon-reload
+    - restart consul
+
+- name: Install Consul | Systemd unit for Consul
+  copy:
+    dest: /etc/systemd/system/consul.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Consul Server
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      ExecStart={{ consul_bin_path }} agent -config-dir=/etc/consul.d -data-dir=/opt/consul
+      ExecReload={{ consul_bin_path }} reload
+      Restart=on-failure
+      RestartSec=5
+      LimitNOFILE=65536
+
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - daemon-reload
+    - restart consul
+
+- name: Install Consul | Ensure Consul started
+  service:
+    name: consul
+    state: started
+    enabled: true
+
+- name: Install Consul | Consul reload (apply config)
+  command: consul reload
+  changed_when: true
+

@@ -1,0 +1,11 @@
+---
+- name: daemon-reload
+  systemd:
+    daemon_reload: true
+- name: restart hotel
+  service:
+    name: hotel
+    state: restarted
+- name: consul reload
+  command: consul reload
+  changed_when: true
