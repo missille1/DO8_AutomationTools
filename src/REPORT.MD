@@ -420,7 +420,7 @@ ansible -i ./ansible/inventory.yml all -m ping
       debug:
         var: dps.stdout_lines
 ```
-<details>
+</details>
 
 Запуск playbook
 
@@ -434,7 +434,7 @@ ansible-playbook -i ~/ansible/inventory.yml ~/ansible/deploy_node01.yml
 
 <img src="img/ansiblework.png">
 
-<details>
+</details>
 
 #### Прогнал заготовленные тесты через postman и удостовериться, что все они проходят успешно.
 
@@ -443,7 +443,7 @@ ansible-playbook -i ~/ansible/inventory.yml ~/ansible/deploy_node01.yml
 
 <img src="img/postamn1.4.png">
 
-<details>
+</details>
 
 #### Сформировал три роли application, apache и postgres. Роль application выполняет развертывание микросервисного приложения при помощи docker-compose node01. Apache устанавливает и запускает стандартный apache сервер node02. Postgres устанавливает и запускает postgres, создает базу данных с произвольной таблицей и добавляет в нее три произвольные записи node02. 
 
@@ -473,7 +473,7 @@ printf '%s\n' '[defaults]' 'remote_tmp = /tmp' 'allow_world_readable_tmpfiles = 
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'pgpass';"
 ```
 
-<details>
+</details>
 
 Написал site.yml для ansible, чтобы указать на каких машинах, что разворачиваем. 
 
@@ -713,7 +713,7 @@ sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'pgpass';"
     state: restarted
 ```
 
-<details>
+</details>
 
 Запускаем ansible
 
@@ -746,7 +746,7 @@ psql "postgresql://postgres:pgpass@192.168.56.12:5432/school21" -c 'TABLE public
 
 <img src="img/01lsmanager.png">
 
-<details>
+</details>
 
 
 ## Part 2. Service Discovery
@@ -810,7 +810,7 @@ Vagrant.configure("2") do |config|
 end
 ```
 
-<details>
+</details>
 
 #### Прокидываем ключи как в part1 на все машины. Устанавливаем ansible и дополнение psql для ansible на manager. Инициализируем роли. 
 
@@ -909,7 +909,7 @@ retry_join = ["192.168.56.20"]
   }
 }
 ```
-<details>
+</details>
 
 #### Загрузил на manager сервис отелей
 
@@ -1036,7 +1036,7 @@ all:
   changed_when: true
 ```
 
-<details>
+</details>
 
 
 #### Написал роль ansible Install_consul_client, которая:
@@ -1171,7 +1171,7 @@ all:
     daemon_reload: yes
 ```
 
-<details>
+</details>
 
 
 #### Написал роль ansible install_db, которая:
@@ -1236,7 +1236,7 @@ all:
   changed_when: false
 ```
 
-<details>
+</details>
 
 
 #### Написал роль ansible install_hotels_service, которая:
@@ -1389,7 +1389,7 @@ all:
     daemon_reload: yes
 ```
 
-<details>
+</details>
 
 #### Запускаем наш ansible и видим корректную отработку всех play's
 
@@ -1422,7 +1422,7 @@ http://127.0.0.1:8082/
 
 <img src="img/api_hotel.png">
 
-<details>
+</details>
 
 #### Проверяем работоспособность CRUD-операций над сервисом отелей. Результаты тестирования.
  
@@ -1465,4 +1465,4 @@ curl -i -X DELETE http://127.0.0.1:8082/hotels/1
 
 <img src="img/CRUD_DEL_FAILED.png">
 
-<details>
+</details>
