@@ -32,7 +32,6 @@ Vagrant.configure("2") do |config|
     vm.vm.box = BOX
     vm.vm.hostname = "node01"
     vm.vm.network "private_network", ip: NODE01_IP
-    # проброс портов для твоего compose (session:8081, gateway:8087)
     vm.vm.network "forwarded_port", guest: 8081, host: 8081, host_ip: "127.0.0.1", auto_correct: true
     vm.vm.network "forwarded_port", guest: 8087, host: 8087, host_ip: "127.0.0.1", auto_correct: true
     vm.vm.provider "virtualbox" do |vb|
