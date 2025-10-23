@@ -3,7 +3,7 @@
 ### Создал с помощью Vagrant три машины: manager, node01, node02. Не устанавливал с помощью shell-скриптов docker при создании машин на Vagrant! Прокинул порты node01 на локальную машину для доступа к пока еще не развернутому микросервисному приложению.
 
 <details>
-<summary>**Vagrant конфиг**</summary>
+<summary>Vagrant конфиг</summary>
 
 ```ruby
 Vagrant.configure("2") do |config|
@@ -55,8 +55,16 @@ end
 ```
 </details>
 
+### Подготовил manager как рабочую станцию для удаленного конфигурирования.
 
-Прокидывания ключа на node01 и node02 c manager
+#### Зашел на manager. На manager проверил подключение к node01 через ssh по приватной сети. Сгенерировать ssh-ключ для подключения к node01 из manager (без passphrase).
+
+```bash
+vagrant ssh manager
+ssh vagrant@192.168.56.11
+```
+
+##### Прокидывания ключа на node01 и node02 c manager
 
 ```bash
 # на manager
@@ -69,148 +77,40 @@ ssh-copy-id -i ~/.ssh/ vagrant@192.168.56.11
 ssh-copy-id -i ~/.ssh/ vagrant@192.168.56.12
 ```
 
+<img src="img/addkeystonodes.png">
+
 ```bash
+# на manager
 ssh vagrant@192.168.56.11
 ssh vagrant@192.168.56.12
 ```
+
+<img src="img/sshwork1.png">
+
+<details>
+<summary>PS: Если не работает вход по паролю</summary>
+
+```bash
+mkdir -p /tmp/ansible01
+vagrant ssh manager
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+CTRL+D
+vagrant ssh manager -c "cat ~/.ssh/id_ed25519.pub" > /tmp/ansible01/manager.pub
+vagrant upload /tmp/ansible02/manager.pub /home/vagrant/manager.pub manager
+vagrant ssh manager -c "cat /home/vagrant/manager.pub >> ~vagrant/.ssh/authorized_keys \\n  && rm /home/vagrant/manager.pub"
+```
+
+</details>
+
+#### Скопировал на manager docker-compose файл и исходный код микросервисов. (Использовал проект из папки src и docker-compose файл из D07.)
 
 ```bash
 # на ХОСТЕ
 vagrant upload ../services/ /home/vagrant/services manager
 ```
 
-```bash
-# на manager
-sudo apt update
-sudo apt install -y ansible
-
-mkdir -p ~/ansible
-vim ~/ansible/inventory.yml
-```
-
-```yml
-nodes:
-  hosts:
-    node01:
-      ansible_host: 192.168.56.11
-    node02:
-      ansible_host: 192.168.56.12
-  vars:
-    ansible_user: vagrant
-```
-
-```bash
-ansible -i ./ansible/inventory.yml all -m ping
-```
-
-
-```yml
----
-- name: Prepare node01 and deploy microservices
-  hosts: node01
-  become: true
-  vars:
-    # На manager
-    app_src_dir: /home/vagrant/services
-    # Куда копируем на node01
-    app_dest_dir: /home/vagrant/services
-    compose_file: "{{ app_dest_dir }}/docker-compose.yml"
-    docker_gpg_url: "https://download.docker.com/linux/ubuntu/gpg"
-    docker_apt_repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable"
-
-  tasks:
-    - name: Docker | Update repositories cache
-      ansible.builtin.apt:
-        update_cache: true
-        cache_valid_time: 3600 
-
-    - name: Docker | Download Docker GPG key
-      ansible.builtin.get_url:
-        url: "{{ docker_gpg_url }}"
-        dest: /etc/apt/keyrings/docker.asc
-        mode: "0644"
-
-    - name: Docker | Add Docker repository
-      ansible.builtin.apt_repository:
-        repo: "{{ docker_apt_repo }}"
-        state: present # убедиться что репозиторий есть в системе
-        filename: docker.list
-
-    - name: Docker | Update repositories cache
-      ansible.builtin.apt:
-        update_cache: true
-
-    - name: Docker | Install Docker packages
-      ansible.builtin.apt:
-        name:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-          - docker-buildx-plugin
-          - docker-compose-plugin
-        state: present
-        update_cache: true
-
-    - name: Docker | enable and start service
-      ansible.builtin.service:
-        name: docker
-        enabled: true
-        state: started
-
-    - name: Docker | add vagrant to docker group
-      ansible.builtin.user:
-        name: vagrant
-        groups: docker
-        append: true
-
-    - name: node01 | ensure destination directory exists on node01
-      ansible.builtin.file:
-        path: "{{ app_dest_dir }}"
-        state: directory
-        owner: vagrant
-        group: vagrant
-        mode: "0755"
-
-    - name: node01 | copy sources & compose from manager to node01
-      ansible.builtin.copy:
-        src: "{{ app_src_dir }}/docker-compose.yml"
-        dest: "{{ app_dest_dir }}/docker-compose.yml"
-        owner: vagrant
-        group: vagrant
-        mode: "0644"
-        directory_mode: "0755"
-
-    - name: Docker | pre-pull base images
-      ansible.builtin.command:
-        cmd: "docker compose -f {{ compose_file }} pull"
-        chdir: "{{ app_dest_dir }}"
-      register: compose_pull # сохраняем результат в переменную
-      changed_when: "'Downloaded' in compose_pull.stdout or 'Pull complete' in compose_pull.stdout"
-
-    - name: node01 | start containers
-      ansible.builtin.command:
-        cmd: "docker compose -f {{ compose_file }} up -d"
-        chdir: "{{ app_dest_dir }}"
-      register: compose_up
-
-    - name: Wait | give containers time to warm up
-      ansible.builtin.pause:
-        seconds: 90
-
-    - name: Info | show running containers
-      ansible.builtin.command:
-        argv:
-          - docker
-          - ps
-          - --format
-          - "{{'{{'}}.Names{{'}}'}}\t{{'{{'}}.Status{{'}}'}}\t{{'{{'}}.Ports{{'}}'}}"
-      changed_when: false
-      register: dps
-
-    - name: Info | containers table
-      ansible.builtin.debug:
-        var: dps.stdout_lines
-```
+<details>
+<summary>docker-compose</summary>
 
 ```yml
 services:
@@ -375,10 +275,177 @@ networks:
     driver: bridge
 ```
 
+</details>
+
+
+#### Установил Ansible на менеджер и создал папку ansible, в которой создал inventory-файл.
+
+```bash
+# на manager
+sudo apt update
+sudo apt install -y ansible
+
+mkdir -p ~/ansible
+vim ~/ansible/inventory.yml
+```
+
+```yml
+nodes:
+  hosts:
+    node01:
+      ansible_host: 192.168.56.11
+    node02:
+      ansible_host: 192.168.56.12
+  vars:
+    ansible_user: vagrant
+```
+
+#### Использовал модуль ping для проверки подключения через Ansible.
+
+```bash
+ansible -i ./ansible/inventory.yml all -m ping
+```
+
+<img src="img/ansibleping.png">
+
+### Написал первый плейбук для Ansible, который выполняет apt update, устанавливает docker, docker-compose, копирует compose-файл из manager'а и разворачивает микросервисное приложение.
+
+<details>
+<summary>playbook</summary>
+
+```yml
+---
+- name: Prepare node01 and deploy microservices
+  hosts: node01
+  become: true
+  vars:
+    # На manager
+    app_src_dir: /home/vagrant/services
+    # Куда копируем на node01
+    app_dest_dir: /home/vagrant/services
+    compose_file: "{{ app_dest_dir }}/docker-compose.yml"
+    docker_gpg_url: "https://download.docker.com/linux/ubuntu/gpg"
+    docker_apt_repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable"
+
+  tasks:
+    - name: Docker | Update repositories cache
+      apt:
+        update_cache: true
+        cache_valid_time: 3600 
+
+    - name: Docker | Download Docker GPG key
+      get_url:
+        url: "{{ docker_gpg_url }}"
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Docker | Add Docker repository
+      apt_repository:
+        repo: "{{ docker_apt_repo }}"
+        state: present # убедиться что репозиторий есть в системе
+        filename: docker.list
+
+    - name: Docker | Update repositories cache
+      apt:
+        update_cache: true
+
+    - name: Docker | Install Docker packages
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Docker | enable and start service
+      service:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Docker | add vagrant to docker group
+      user:
+        name: vagrant
+        groups: docker
+        append: true
+
+    - name: node01 | ensure destination directory exists on node01
+      file:
+        path: "{{ app_dest_dir }}"
+        state: directory
+        owner: vagrant
+        group: vagrant
+        mode: "0755"
+
+    - name: node01 | copy sources & compose from manager to node01
+      copy:
+        src: "{{ app_src_dir }}/docker-compose.yml"
+        dest: "{{ app_dest_dir }}/docker-compose.yml"
+        owner: vagrant
+        group: vagrant
+        mode: "0644"
+        directory_mode: "0755"
+
+    - name: Docker | pre-pull base images
+      command:
+        cmd: "docker compose -f {{ compose_file }} pull"
+        chdir: "{{ app_dest_dir }}"
+      register: compose_pull # сохраняем результат в переменную
+      changed_when: "'Downloaded' in compose_pull.stdout or 'Pull complete' in compose_pull.stdout"
+
+    - name: node01 | start containers
+      command:
+        cmd: "docker compose -f {{ compose_file }} up -d"
+        chdir: "{{ app_dest_dir }}"
+      register: compose_up
+
+    - name: Wait | give containers time to warm up
+      pause:
+        seconds: 90
+
+    - name: Info | show running containers
+      command:
+        argv:
+          - docker
+          - ps
+          - --format
+          - "{{'{{'}}.Names{{'}}'}}\t{{'{{'}}.Status{{'}}'}}\t{{'{{'}}.Ports{{'}}'}}"
+      changed_when: false
+      register: dps
+
+    - name: Info | containers table
+      debug:
+        var: dps.stdout_lines
+```
+<details>
+
+Запуск playbook
+
 ```bash
 # на manager
 ansible-playbook -i ~/ansible/inventory.yml ~/ansible/deploy_node01.yml
 ```
+
+<details>
+<summary>Скрин работы ansible</summary>
+
+<img src="img/ansiblework.png">
+
+<details>
+
+#### Прогнал заготовленные тесты через postman и удостовериться, что все они проходят успешно.
+
+<details>
+<summary>Скрин тестов Postman</summary>
+
+<img src="img/postamn1.4.png">
+
+<details>
+
+#### Сформировал три роли application, apache и postgres. Роль application выполняет развертывание микросервисного приложения при помощи docker-compose node01. Apache устанавливает и запускает стандартный apache сервер node02. Postgres устанавливает и запускает postgres, создает базу данных с произвольной таблицей и добавляет в нее три произвольные записи node02. 
 
 ```bash
 # на manager
@@ -394,6 +461,9 @@ ansible-galaxy init roles/postgres
 sudo ansible-galaxy collection install community.postgresql
 ```
 
+<details>
+<summary>PS: Для записи в db от пользователя vagrant может понадобиться</summary>
+
 ```bash
 printf '%s\n' '[defaults]' 'remote_tmp = /tmp' 'allow_world_readable_tmpfiles = False' > ansible.cfg
 ```
@@ -403,19 +473,282 @@ printf '%s\n' '[defaults]' 'remote_tmp = /tmp' 'allow_world_readable_tmpfiles = 
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'pgpass';"
 ```
 
-```bash
-# на хосте
-psql "postgresql://postgres:pgpass@192.168.56.12:5432/school21" -c 'TABLE public.students;'
+<details>
+
+Написал site.yml для ansible, чтобы указать на каких машинах, что разворачиваем. 
+
+```yml
+---
+# node01: микросервисы 
+- name: Application stack on node01
+  hosts: node01
+  become: true
+  roles:
+    - role: application
+
+# node02: apache + postgres
+- name: Apache and Postgres on node02
+  hosts: node02
+  become: true
+  roles:
+    - role: apache
+    - role: postgres
 ```
+
+
+<details>
+<summary>tasks для ролей</summary>
+
+```yml
+---
+# tasks file for roles/apache
+- name: Apt | Update cache
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Apt | Install apache2
+  apt:
+    name: apache2
+    state: present
+
+- name: Apache | Enable and start
+  service:
+    name: apache2
+    enabled: true
+    state: started
+```
+
+```yml
+---
+# tasks file for roles/application
+
+- name: Docker | Ensure keyrings dir exists
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Docker | Update repositories cache
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Docker | Download Docker GPG key (armored)
+  get_url:
+    url: "{{ docker_gpg_url }}"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+
+- name: Docker | Convert armored key to .gpg (dearmor)
+  command:
+    cmd: gpg --dearmor -o /etc/apt/keyrings/docker.gpg /etc/apt/keyrings/docker.asc
+  args:
+    creates: /etc/apt/keyrings/docker.gpg
+
+- name: Docker | Add Docker repository
+  apt_repository:
+    repo: "{{ docker_apt_repo }}"
+    state: present
+    filename: docker.list
+
+- name: Docker | Update repositories cache (after adding repo)
+  apt:
+    update_cache: true
+
+- name: Docker | Install Docker packages
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Docker | Enable and start service
+  service:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Docker | Add vagrant to docker group
+  user:
+    name: vagrant
+    groups: docker
+    append: true
+
+- name: node01 | Ensure destination directory exists
+  file:
+    path: "{{ app_dest_dir }}"
+    state: directory
+    owner: vagrant
+    group: vagrant
+    mode: "0755"
+
+- name: node01 | Copy compose file
+  copy:
+    src: "{{ compose_file }}"
+    dest: "{{ compose_file }}"
+    owner: vagrant
+    group: vagrant
+    mode: "0644"
+    directory_mode: "0755"
+
+- name: Docker | Pre-pull base images
+  command:
+    cmd: "docker compose -f {{ compose_file }} pull"
+    chdir: "{{ app_dest_dir }}"
+  register: compose_pull
+  changed_when: >
+    'Downloaded' in compose_pull.stdout
+    or 'Pull complete' in compose_pull.stdout
+
+- name: node01 | Start containers
+  command:
+    cmd: "docker compose -f {{ compose_file }} up -d"
+    chdir: "{{ app_dest_dir }}"
+  register: compose_up
+
+- name: Wait | Give containers time to warm up
+  pause:
+    seconds: 30
+
+- name: Info | Show running containers
+  command:
+    argv:
+      - docker
+      - ps
+      - --format
+      - "{{'{{'}}.Names{{'}}'}}\t{{'{{'}}.Status{{'}}'}}\t{{'{{'}}.Ports{{'}}'}}"
+  changed_when: false
+  register: dp
+
+- name: Info | Containers table
+  debug:
+    var: dp.stdout_lines
+```
+
+```yml
+---
+- name: Apt | Update cache
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Apt | Install ACL (for become_user file perms)
+  apt:
+    name: acl
+    state: present
+    update_cache: true
+  become: true
+
+- name: Apt | Install Postgres and deps
+  apt:
+    name:
+      - "postgresql-{{ postgresql_version }}"
+      - postgresql-contrib
+      - python3-psycopg2
+    state: present
+
+- name: Postgres | Ensure service started
+  service:
+    name: postgresql
+    enabled: true
+    state: started
+
+- name: Postgres | Listen on all addresses
+  lineinfile:
+    path: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
+    regexp: '^#?listen_addresses\s*='
+    line: "listen_addresses = '*'"
+  notify: Restart Postgres
+  become: true
+
+- name: Postgres | Allow LAN in pg_hba.conf
+  blockinfile:
+    path: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK FOR LAN ACCESS"
+    block: |
+      host    all    all    {{ pg_listen_cidr }}    md5
+  notify: Restart Postgres
+
+- name: DB | Ensure database exists (owner = postgres)
+  community.postgresql.postgresql_db:
+    name: "{{ pg_db }}"
+    owner: postgres
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: DB | Create table if not exists
+  community.postgresql.postgresql_query:
+    db: "{{ pg_db }}"
+    query: |
+      CREATE TABLE IF NOT EXISTS public.students(
+        id   SERIAL PRIMARY KEY,
+        name TEXT UNIQUE
+      );
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: DB | Insert three rows
+  community.postgresql.postgresql_query:
+    db: "{{ pg_db }}"
+    query: |
+      INSERT INTO public.students(name) VALUES
+        ('Ramonagr'),
+        ('Sandiani'),
+        ('Nutmegha')
+      ON CONFLICT (name) DO NOTHING;
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: Postgres | Final restart
+  service:
+    name: postgresql
+    state: restarted
+```
+
+<details>
+
+Запускаем ansible
+
+```bash
+ansible-playbook -i ~/ansible/inventory.yml ~/ansible/site.yml
+```
+
+Проверяем postman-тестами работоспособность микросервисного приложения. Для Apache веб-страница открывается в браузере хоста. Для PostgreSQL,подключился с локальной машины и отобразил содержимое ранее созданной таблицы с данными. 
+
+<details>
+<summary>tasks для ролей</summary>
+
+<img src="img/1endpostman.png">
 
 ```
 # на хосте apache
 http://192.168.56.12/
 ```
 
+<img src="img/01apache.png">
+
 ```bash
-ansible-playbook -i ~/ansible/inventory.yml ~/ansible/site.yml
+# на хосте
+psql "postgresql://postgres:pgpass@192.168.56.12:5432/school21" -c 'TABLE public.students;'
 ```
+
+<img src="img/01psql.png">
+
+Распределение файлов по папкам на manager
+
+<img src="img/01lsmanager.png">
+
+<details>
+
+
 
 ```ruby
 Vagrant.configure("2") do |config|
