@@ -1,15 +1,60 @@
+### Part 1: с хоста manager запускаем Ansible, который ставит приложение на node01, а на node02 — Apache и PostgreSQL. 
+
 ```mermaid
 flowchart TD
-    Manager["Manager : \n- Ansible"]
-    node01["node01 : \n- сервис отелей в docker"]
-    node02["node02 : \n- apache\n- postgresql"]
+    classDef managerStyle minHeight:0
     
-    Manager -- 1 --> node01
-    Manager -- 1 --> node02
+    Manager[**Manager**<br/>Ansible]
+    Node01[**Node01**<br/>Приложение в docker]
+    Node02[**Node02**<br/>- apache<br/>- postgresql]
+    
+    Manager --> Node01
+    Manager --> Node02
+    
+    class Manager managerStyle
 ```
 
+### Part 2: с manager разворачиваем Consul Server на consul_server, приложение на api, базу на db, и поднимаем Consul Client + Envoy на api и db для сервис-меша.
 
+```mermaid
+flowchart TB
 
+%% Узлы управления
+M[Manager<br/>Ansible]
+
+%% Колонки узлов
+subgraph API[api]
+  direction TB
+  A1[Service:<br/> hotel-service : 8082]
+  A2[Proxy: Envoy]
+  A3[Consul Client]
+  A1 <--> A2
+  A2 <--> A3
+end
+
+subgraph CONSUL[consul-server]
+  direction TB
+  S1[Consul Server<br/>UI :8500]
+end
+
+subgraph DB[db]
+  direction TB
+  D1[PostgreSQL<br/>:5432]
+  D2[Proxy: Envoy]
+  D3[Consul Client]
+  D3 <--> D2
+  D2 <--> D1
+end
+
+%% Управляющие связи от manager
+M --> API
+M --> CONSUL
+M --> DB
+
+%% Связность сервис-меша (ровно по одному ребру на шаг)
+A3 <--> S1
+S1 <--> D3
+```
 
 <details>
 <summary>Полное задание</summary>
