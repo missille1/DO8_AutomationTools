@@ -1,4 +1,6 @@
-### Part 1: с хоста manager запускаем Ansible, который ставит приложение на node01, а на node02 — Apache и PostgreSQL. 
+## Краткое описание
+
+### Part 1: C Manager запускаем Ansible, который ставит приложение на Node01, а на Node02 — Apache и PostgreSQL. 
 
 ```mermaid
 flowchart TD
@@ -14,7 +16,7 @@ flowchart TD
     class Manager managerStyle
 ```
 
-### Part 2: с manager разворачиваем Consul Server на consul_server, приложение на api, базу на db, и поднимаем Consul Client + Envoy на api и db для сервис-меша.
+### Part 2: C manager разворачиваем Consul Server на Consul_server, приложение на API, базу на DB, и поднимаем Consul Client + Envoy на API и DB для сервис-меша.
 
 ```mermaid
 flowchart TB
@@ -1393,7 +1395,7 @@ all:
 - запускает собранный jar-файл командой java -jar <путь до hotel-service>/hotel-service/target/<имя jar-файла>.jar.
 
 <details>
-<summary>tasks Install_consul_server</summary>
+<summary>tasks install_hotel_service</summary>
 
 ```yml
 ---
